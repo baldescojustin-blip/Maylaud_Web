@@ -111,19 +111,23 @@ export const AuthProvider = ({ children }) => {
     });
     if (error) throw error;
 
-    // If email confirmation is off, we already have a session and can set
-    // this account's role to admin right now (the trigger's inserted row
-    // defaults to role 'resident'), and mark it verified since there's no
-    // separate OTP step in this case. If confirmation IS required instead,
-    // there's no session yet — completeSignupProfile() handles both of
-    // these after the OTP step, once we're actually authenticated as this
-    // user.
+    // NOTE — this intentionally auto-promotes every web signup to admin.
+    // We had removed that (see git history) because it meant anyone who
+    // found this page got instant admin access with no invite/approval —
+    // that's still true here. It was restored because the project spec
+    // explicitly calls for "Web Registration → Admin Role" as a platform
+    // rule (mobile stays 'resident' by default — see register() in the
+    // mobile app, which never touches role). If this ever needs to be
+    // locked back down, reintroduce the manual-promotion step this
+    // replaced (see supabase/promote_admin.sql in the may_laud repo) or
+    // gate it behind an allowlist/invite check instead of removing this
+    // update outright.
     if (data.session && data.user?.id) {
-      const { error: roleError } = await supabase
+      const { error: verifyError } = await supabase
         .from("profiles")
         .update({ role: "admin", is_verified: true })
         .eq("id", data.user.id);
-      if (roleError) console.warn("Could not set admin role:", roleError.message);
+      if (verifyError) console.warn("Could not mark profile verified:", verifyError.message);
     }
 
     return data;
@@ -147,6 +151,11 @@ export const AuthProvider = ({ children }) => {
   // auth.users trigger) — we UPDATE it, not upsert/insert, since there's no
   // insert policy on profiles for the client to use. Successfully verifying
   // the OTP is exactly what `is_verified` exists to track, so flip it here.
+  //
+  // NOTE — sets role: "admin" here too, same reasoning as signUp() above:
+  // this is the OTP-confirmed path, so it's the one that actually runs
+  // for most web signups (signUp() only hits the role update itself when
+  // email confirmation is off and a session already exists).
   const completeSignupProfile = async ({ userId, name, phone }) => {
     try {
       const { error } = await supabase

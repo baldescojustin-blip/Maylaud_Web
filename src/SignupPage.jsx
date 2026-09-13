@@ -130,6 +130,9 @@ const SignupPage = () => {
           phone: formData.phone,
         });
       }
+      // completeSignupProfile() just set role: "admin" on this account
+      // (see AuthContext.jsx), so it's safe to go straight in — no
+      // approval step needed.
       navigate("/dashboard");
     } catch (err) {
       setError(err.message || "Invalid or expired code. Please try again.");

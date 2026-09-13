@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { supabase } from "./supabaseClient";
 
 // Status vocabulary matches CitizenReportService._statusMessage() in the
@@ -14,6 +14,16 @@ const statusColors = {
 };
 
 const statusLabel = (s) => (s || "received").replace("_", " ");
+
+// severity comes from the mobile app's ML triage (see
+// AiTriageService.classifySeverity() / SeverityResult.toPriorityLevel())
+// — always exactly one of these three, when set at all.
+const SEVERITY_ORDER = { High: 0, Medium: 1, Low: 2 };
+const severityColors = {
+  High: "bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300",
+  Medium: "bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300",
+  Low: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300",
+};
 
 // Mirrors CitizenReportService._statusMessage() in the mobile app so the
 // wording a resident sees in their in-app notification matches what
@@ -65,6 +75,9 @@ const CitizenReportsPage = () => {
   const [error, setError] = useState("");
   const [selectedReport, setSelectedReport] = useState(null);
   const [filter, setFilter] = useState("all");
+  // Defaults to "High" so admins land straight on the reports that need
+  // the fastest response, instead of having to filter manually every time.
+  const [severityFilter, setSeverityFilter] = useState("High");
   const [search, setSearch] = useState("");
 
   const fetchReports = useCallback(async () => {
@@ -128,12 +141,36 @@ const CitizenReportsPage = () => {
   const residentName = (report) =>
     report.profiles?.name || report.contact || "Resident";
 
-  const filteredReports = reports.filter((report) => {
-    if (filter !== "all" && report.status !== filter) return false;
-    const haystack = `${report.description || ""} ${residentName(report)} ${report.category || ""}`.toLowerCase();
-    if (search && !haystack.includes(search.toLowerCase())) return false;
-    return true;
-  });
+  const isDone = (report) => report.status === "resolved" || report.status === "closed";
+
+  // FIX — reports used to only ever sort by created_at, so a High
+  // severity report submitted yesterday could sit buried below a dozen
+  // Low severity ones from this morning — and a resolved/closed report
+  // could sit ABOVE an ongoing one just for being more severe or newer,
+  // burying the work that's still actually in progress. Ongoing reports
+  // now always come before resolved/closed ones; within each of those
+  // two groups, High severity floats to the top, then most recent first.
+  const filteredReports = reports
+    .filter((report) => {
+      if (filter !== "all" && report.status !== filter) return false;
+      if (severityFilter !== "all" && report.severity !== severityFilter) return false;
+      const haystack = `${report.description || ""} ${residentName(report)} ${report.category || ""}`.toLowerCase();
+      if (search && !haystack.includes(search.toLowerCase())) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const doneDiff = Number(isDone(a)) - Number(isDone(b));
+      if (doneDiff !== 0) return doneDiff;
+      const severityDiff =
+        (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3);
+      if (severityDiff !== 0) return severityDiff;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+
+  // Index where the resolved/closed group begins, so the table can drop
+  // in a section divider right at that boundary (filteredReports is
+  // already sorted so all "ongoing" rows come first).
+  const firstDoneIndex = filteredReports.findIndex(isDone);
 
   const formatDate = (iso) => {
     if (!iso) return "—";
@@ -163,12 +200,22 @@ const CitizenReportsPage = () => {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border dark:border-gray-700">
           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
             {reports.length}
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400">Total Reports</div>
+        </div>
+        <div
+          className="bg-white dark:bg-gray-800 rounded-xl p-4 border-2 border-red-300 dark:border-red-700 cursor-pointer"
+          onClick={() => setSeverityFilter("High")}
+          title="Click to filter to High priority reports"
+        >
+          <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+            {reports.filter((r) => r.severity === "High").length}
+          </div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">High Priority</div>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border dark:border-gray-700">
           <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
@@ -193,7 +240,7 @@ const CitizenReportsPage = () => {
       {/* Filters and Search */}
       <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border dark:border-gray-700">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center space-x-4">
+          <div className="flex items-start space-x-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Filter by Status
@@ -210,6 +257,24 @@ const CitizenReportsPage = () => {
                   </option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Filter by Severity
+              </label>
+              <select
+                value={severityFilter}
+                onChange={(e) => setSeverityFilter(e.target.value)}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white"
+              >
+                <option value="all">All Severities</option>
+                <option value="High">High Priority</option>
+                <option value="Medium">Medium Priority</option>
+                <option value="Low">Low Priority</option>
+              </select>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 max-w-[220px]">
+                Severity is AI-suggested — always confirm before acting.
+              </p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -239,6 +304,12 @@ const CitizenReportsPage = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Category
                 </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+                  title="AI-suggested severity — requires human confirmation, not a final determination"
+                >
+                  Severity ⓘ
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Status
                 </th>
@@ -253,24 +324,34 @@ const CitizenReportsPage = () => {
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
               {loading && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
                     Loading reports…
                   </td>
                 </tr>
               )}
               {!loading && filteredReports.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
                     No reports match this view.
                   </td>
                 </tr>
               )}
-              {filteredReports.map((report) => (
-                <tr
-                  key={report.id}
-                  className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
-                  onClick={() => setSelectedReport(report)}
-                >
+              {filteredReports.map((report, index) => (
+                <Fragment key={report.id}>
+                  {index === firstDoneIndex && index > 0 && (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="px-6 py-2 bg-gray-100 dark:bg-gray-900 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400"
+                      >
+                        Resolved / Closed
+                      </td>
+                    </tr>
+                  )}
+                  <tr
+                    className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                    onClick={() => setSelectedReport(report)}
+                  >
                   <td className="px-6 py-4">
                     <div>
                       <div className="font-medium text-gray-800 dark:text-white">
@@ -291,6 +372,19 @@ const CitizenReportsPage = () => {
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-300">
                       {report.category}
                     </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    {report.severity ? (
+                      <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                          severityColors[report.severity] || severityColors.Low
+                        }`}
+                      >
+                        {report.severity}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <select
@@ -331,7 +425,8 @@ const CitizenReportsPage = () => {
                       Resolve
                     </button>
                   </td>
-                </tr>
+                  </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -383,6 +478,29 @@ const CitizenReportsPage = () => {
                   </div>
                 </div>
 
+                {/* Map — `location` is a plain text field (see schema.sql),
+                    sometimes a raw "lat, lng" string when the mobile app's
+                    reverse-geocoding failed, sometimes a real address.
+                    Google's public map-embed endpoint geocodes either kind
+                    of query itself, so this works for both without a Maps
+                    API key or billing setup. */}
+                {selectedReport.location && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Map
+                    </label>
+                    <iframe
+                      title="Report location"
+                      className="w-full h-64 rounded-lg border dark:border-gray-700"
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                      src={`https://www.google.com/maps?q=${encodeURIComponent(
+                        selectedReport.location
+                      )}&output=embed`}
+                    />
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                     Description
@@ -411,7 +529,7 @@ const CitizenReportsPage = () => {
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                       Category
@@ -420,6 +538,27 @@ const CitizenReportsPage = () => {
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-300">
                         {selectedReport.category}
                       </span>
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Severity
+                    </label>
+                    <p className="mt-1">
+                      {selectedReport.severity ? (
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            severityColors[selectedReport.severity] || severityColors.Low
+                          }`}
+                        >
+                          {selectedReport.severity}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                      AI-suggested — requires human confirmation.
                     </p>
                   </div>
                   <div>

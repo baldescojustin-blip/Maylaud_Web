@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 
 const LoginPage = () => {
@@ -10,6 +10,11 @@ const LoginPage = () => {
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Shows e.g. the "an administrator needs to approve your account"
+  // message SignupPage.jsx sends here after a successful signup, now
+  // that new accounts aren't auto-promoted to admin anymore.
+  const infoMessage = location.state?.info;
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -39,6 +44,12 @@ const LoginPage = () => {
           <h1 className="text-3xl font-bold text-gray-800">Milaor Web Admin</h1>
           <p className="text-gray-600 mt-2">Sign in to your administrator account</p>
         </div>
+
+        {infoMessage && !error && (
+          <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-sm px-4 py-3">
+            {infoMessage}
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">

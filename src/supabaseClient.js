@@ -8,9 +8,16 @@ import { createClient } from "@supabase/supabase-js";
 // Falls back to the known project values if the .env file didn't make it
 // into the folder (this can happen with some Windows zip extractors that
 // mishandle dotfiles) so the app still connects instead of failing silently.
-const FALLBACK_URL = "https://qwkdkcycwvvdcqmaxodw.supabase.co";
+//
+// FIX — this pointed at an abandoned Supabase project
+// (qwkdkcycwvvdcqmaxodw) with an incompatible schema left over from
+// early setup. The Flutter mobile app moved to a fresh project
+// (enojnhijfabncaeoyctt, "Mylaud") once that became clear — this admin
+// panel was never updated to match, so it would have silently managed a
+// completely different database than the one residents actually use.
+const FALLBACK_URL = "https://enojnhijfabncaeoyctt.supabase.co";
 const FALLBACK_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3a2RrY3ljd3Z2ZGNxbWF4b2R3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NTYxNTgsImV4cCI6MjA5NTMzMjE1OH0.BYOwYUxy3GwrkUvXEp0ekZomU8KLCv5QD9knBP6m5as";
+  "sb_publishable_CycaIfVSoGPshOrlbleTKQ_OUd1oqEe";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || FALLBACK_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || FALLBACK_ANON_KEY;
